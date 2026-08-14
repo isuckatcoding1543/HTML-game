@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Dash Jump</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070716;font-family:Arial,sans-serif;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{position:fixed;top:max(10px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(650px,90vw);z-index:5;text-align:center;color:white;pointer-events:none;text-shadow:0 2px 4px #000}
+#name{font-size:17px;font-weight:900;letter-spacing:1px}
+#percent{font-size:14px;margin-top:2px}
+.track{height:6px;background:#202038;border-radius:10px;margin-top:6px;overflow:hidden}
+#bar{height:100%;width:0;background:#fff;box-shadow:0 0 10px #fff}
+#mobileJump{position:fixed;right:18px;bottom:max(18px,env(safe-area-inset-bottom));width:96px;height:96px;border-radius:50%;z-index:6;border:3px solid rgba(255,255,255,.75);background:rgba(0,0,0,.28);color:#fff;font-size:15px;font-weight:900;box-shadow:0 0 25px rgba(255,255,255,.2)}
+#mobileJump:active{transform:scale(.94);background:rgba(255,255,255,.18)}
+#pauseBtn{position:fixed;left:15px;bottom:max(18px,env(safe-area-inset-bottom));z-index:6;border:2px solid #fff;border-radius:10px;background:rgba(0,0,0,.35);color:#fff;padding:11px 14px;font-weight:900}
+.screen{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:18px;background:radial-gradient(circle at 50% 20%,#29205b 0,#0b0b20 55%,#05050d 100%)}
+.panel{width:min(900px,94vw);max-height:92vh;overflow:auto;padding:28px 20px;border:3px solid #fff;border-radius:20px;background:rgba(8,8,22,.93);box-shadow:0 0 35px rgba(255,255,255,.18)}
+h1{text-align:center;font-size:clamp(48px,11vw,92px);margin:0;letter-spacing:3px;color:#fff;text-shadow:4px 4px 0 #6840ff,0 0 25px #00eaff}
+.sub{text-align:center;color:#bfc4e8;margin:5px 0 25px}
+.levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.level{border:2px solid #3b3b62;border-radius:14px;padding:18px;background:linear-gradient(145deg,#171735,#0c0c20)}
+.level h2{margin:0 0 8px}
+.level p{color:#a8aecc;font-size:14px;line-height:1.45;min-height:62px}
+.play{width:100%;padding:12px;border-radius:9px;background:#fff;color:#111;font-weight:900}
+.play:active{transform:scale(.97)}
+.lock{opacity:.35}
+.tip{text-align:center;color:#777ea5;font-size:13px;margin-top:18px}
+#overlay{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72)}
+#overlay .panel{text-align:center;width:min(470px,90vw)}
+#overlay h2{font-size:42px;margin:0 0 10px;text-shadow:0 0 15px #fff}
+.btn{padding:12px 20px;margin:5px;border:0;border-radius:9px;font-weight:900;background:#fff;color:#111}
+.dark{background:#343450;color:#fff}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="name">Dash Jump</div>
+  <div id="percent">0%</div>
+  <div class="track"><div id="bar"></div></div>
+</div>
+
+<button id="pauseBtn" class="hidden">Ⅱ</button>
+<button id="mobileJump" class="hidden">JUMP</button>
+
+<div id="menu" class="screen">
+  <div class="panel">
+    <h1>DASH JUMP</h1>
+    <div class="sub">A fast neon platform game inspired by classic rhythm platformers.</div>
+    <div id="levels" class="levels"></div>
+    <div class="tip">MOBILE: tap JUMP • DESKTOP: SPACE / CLICK • P pauses</div>
+  </div>
+</div>
+
+<div id="overlay" class="hidden">
+  <div class="panel">
+    <h2 id="overTitle">PAUSED</h2>
+    <p id="overText" style="color:#bfc4e8"></p>
+    <button class="btn" id="resume">RESUME</button>
+    <button class="btn dark" id="restart">RESTART</button>
+    <button class="btn dark" id="menuBtn">LEVEL SELECT</button>
+  </div>
+</div>
+
+<script>
+const c=document.getElementById("game"),ctx=c.getContext("2d");
+let W=innerWidth,H=innerHeight,DPR=1;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*DPR;c.height=H*DPR;c.style.width=W+"px";c.style.height=H+"px";ctx.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener("resize",resize);resize();
+
+const levels=[
+ {name:"Stereo Jump",difficulty:"Easy",length:4300},
+ {name:"Neon Drive",difficulty:"Normal",length:5700},
+ {name:"Dash Force",difficulty:"Hard",length:7200}
+];
+let unlocked=Math.max(1,Math.min(3,+localStorage.getItem("dashJumpUnlocked")||1));
+let level=null,active=false,paused=false,camera=0,objects=[],particles=[],progress=0,speed=7.2;
+const p={x:160,y:0,s:38,vy:0,rot:0,mode:"cube",ground:false};
+const stars=Array.from({length:100},()=>({x:Math.random()*9000,y:Math.random(),r:Math.random()*2+.5}));
+
+const levelsEl=document.getElementById("levels");
+function menu(){
+ active=false;
+ document.getElementById("menu").classList.remove("hidden");
+ document.getElementById("hud").classList.add("hidden");
+ document.getElementById("mobileJump").classList.add("hidden");
+ document.getElementById("pauseBtn").classList.add("hidden");
+ document.getElementById("overlay").classList.add("hidden");
+ levelsEl.innerHTML="";
+ levels.forEach((l,i)=>{
+   const locked=i+1>unlocked;
+   const d=document.createElement("div");
+   d.className="level";
+   d.innerHTML=`<h2>${i+1}. ${l.name}</h2><p>${l.difficulty}<br>${locked?"Unlock the previous level to play.":"Tap PLAY to start."}</p><button class="play ${locked?"lock":""}">${locked?"🔒 LOCKED":"PLAY"}</button>`;
+   if(!locked)d.querySelector("button").onclick=()=>start(i);
+   levelsEl.appendChild(d);
+ });
+}
+menu();
+
+function start(i){
+ level=levels[i];active=true;paused=false;camera=0;objects=[];particles=[];progress=0;
+ speed=7.2+i*.8;p.x=160;p.mode="cube";p.s=38;p.vy=0;p.rot=0;p.ground=true;
+ document.getElementById("menu").classList.add("hidden");
+ document.getElementById("hud").classList.remove("hidden");
+ document.getElementById("mobileJump").classList.remove("hidden");
+ document.getElementById("pauseBtn").classList.remove("hidden");
+ document.getElementById("name").textContent=level.name;
+ buildLevel(i);
+}
+
+const gy=()=>H-100;
+function spike(x){objects.push({t:"spike",x,y:gy()-42,w:42,h:42})}
+function block(x,y,w=46,h=60){objects.push({t:"block",x,y,w,h})}
+function coin(x,y){objects.push({t:"coin",x,y,r:10,got:false})}
+function portal(x,mode){objects.push({t:"portal",x,y:gy()-115,w:45,h:115,mode})}
+function finish(x){objects.push({t:"finish",x,y:gy()-160,w:35,h:160})}
+
+function buildLevel(i){
+ let x=500, n=i===0?13:i===1?17:23;
+ for(let k=0;k<n;k++){
+   x+=230+Math.random()*100;
+   if(k%5===0){spike(x);spike(x+44);coin(x+35,gy()-120)}
+   else if(k%5===1){block(x,gy()-65,48,65);coin(x+20,gy()-125)}
+   else if(k%5===2){spike(x);block(x+60,gy()-90,48,90)}
+   else if(k%5===3){spike(x);spike(x+44);spike(x+88)}
+   else {block(x,gy()-110,48,110);spike(x+60)}
+ }
+ const portalX=i===0?3450:i===1?4100:4850;
+ portal(portalX,"ship");
+ let s=portalX+260,end=level.length-450;
+ while(s<end){
+   if(Math.random()<.5){
+     block(s,gy()-170,55,170);
+     block(s,gy()-390,55,170);
+   }else{
+     block(s,gy()-100,55,100);
+     block(s,gy()-470,55,250);
+   }
+   if(Math.random()<.7)coin(s+90,gy()-270);
+   s+=260+Math.random()*80;
+ }
+ portal(end,"cube");
+ spike(end+230);spike(end+274);
+ coin(end+250,gy()-120);
+ finish(level.length);
+}
+
+function jump(){
+ if(!active||paused)return;
+ if(p.mode==="cube"){
+   if(p.ground){p.vy=-15.5;p.ground=false}
+ }else{
+   p.vy=-6.2;
+ }
+}
+document.getElementById("mobileJump").addEventListener("pointerdown",e=>{e.preventDefault();jump()});
+c.addEventListener("pointerdown",e=>{if(active)jump()});
+addEventListener("keydown",e=>{
+ if(e.code==="Space"||e.code==="ArrowUp"){e.preventDefault();jump()}
+ if(e.code==="KeyP")togglePause();
+ if(e.code==="KeyR"&&active)start(levels.indexOf(level));
+});
+
+function togglePause(){
+ if(!active)return;
+ paused=!paused;
+ document.getElementById("overlay").classList.toggle("hidden",!paused);
+ document.getElementById("overTitle").textContent="PAUSED";
+ document.getElementById("overText").textContent=Math.floor(progress)+"%";
+}
+document.getElementById("pauseBtn").onclick=togglePause;
+document.getElementById("resume").onclick=()=>{paused=false;document.getElementById("overlay").classList.add("hidden")};
+document.getElementById("restart").onclick=()=>start(levels.indexOf(level));
+document.getElementById("menuBtn").onclick=menu;
+
+function die(){
+ active=false;
+ document.getElementById("overlay").classList.remove("hidden");
+ document.getElementById("overTitle").textContent="CRASH!";
+ document.getElementById("overText").textContent="You reached "+Math.floor(progress)+"%.";
+ document.getElementById("resume").textContent="TRY AGAIN";
+ document.getElementById("resume").onclick=()=>start(levels.indexOf(level));
+}
+function win(){
+ active=false;
+ const i=levels.indexOf(level);
+ if(i+1===unlocked&&unlocked<3){unlocked++;localStorage.setItem("dashJumpUnlocked",unlocked)}
+ document.getElementById("overlay").classList.remove("hidden");
+ document.getElementById("overTitle").textContent="LEVEL COMPLETE!";
+ document.getElementById("overText").textContent="100% • "+level.name;
+ document.getElementById("resume").textContent=i<2?"NEXT LEVEL":"PLAY AGAIN";
+ document.getElementById("resume").onclick=()=>i<2?start(i+1):start(i);
+}
+
+function hit(a,b){return a.x<b.x+b.w&&a.x+a.s>b.x&&a.y<b.y+b.h&&a.y+a.s>b.y}
+function particle(){particles.push({x:p.x,y:p.y+p.s/2,vx:-2-Math.random()*2,vy:(Math.random()-.5)*3,life:1,s:2+Math.random()*4})}
+
+function update(dt){
+ if(!active||paused)return;
+ const f=dt/16.67;
+ camera+=speed*f;
+ const ground=gy();
+
+ if(p.mode==="cube"){
+   p.vy+=.86*f;p.y+=p.vy*f;
+   if(p.y+p.s>=ground){p.y=ground-p.s;p.vy=0;p.ground=true;p.rot=0}
+   else{p.ground=false;p.rot+=.13*f}
+ }else{
+   p.vy+=.32*f;p.y+=p.vy*f;p.rot=p.vy*.06;
+   if(p.y<25){p.y=25;p.vy=1}
+   if(p.y+p.s>ground){p.y=ground-p.s;p.vy=-1}
+ }
+
+ for(const o of objects){
+   const x=o.x-camera;
+   if(o.t==="coin"&&!o.got){
+     const dx=p.x+p.s/2-(x+o.r),dy=p.y+p.s/2-(o.y+o.r);
+     if(dx*dx+dy*dy<(p.s/2+o.r)**2)o.got=true;
+   }
+   if(o.t==="portal"&&Math.abs(x-p.x)<38)p.mode=o.mode;
+   if((o.t==="spike"||o.t==="block")&&hit(p,{x,y:o.y,w:o.w,h:o.h}))die();
+   if(o.t==="finish"&&x<p.x+p.s)win();
+ }
+ progress=Math.min(100,camera/level.length*100);
+ document.getElementById("percent").textContent=Math.floor(progress)+"%";
+ document.getElementById("bar").style.width=progress+"%";
+ if(Math.random()<.7)particle();
+ for(let i=particles.length-1;i>=0;i--){let q=particles[i];q.x+=q.vx*f;q.y+=q.vy*f;q.life-=.04*f;if(q.life<=0)particles.splice(i,1)}
+}
+
+function draw(){
+ const ground=gy();
+ const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#15154d");g.addColorStop(1,"#070711");
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+ for(const s of stars){let x=(s.x-camera*.18)%W;if(x<0)x+=W;ctx.globalAlpha=.25;ctx.fillStyle="#fff";ctx.fillRect(x,s.y*H,s.r,s.r)}
+ ctx.globalAlpha=1;
+
+ ctx.strokeStyle="rgba(255,255,255,.06)";ctx.lineWidth=1;
+ let off=-(camera%50);
+ for(let x=off;x<W;x+=50){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+ for(let y=0;y<H;y+=50){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+
+ ctx.fillStyle="#11112b";ctx.fillRect(0,ground,W,H-ground);
+ ctx.fillStyle="#fff";ctx.shadowBlur=15;ctx.shadowColor="#fff";ctx.fillRect(0,ground,W,5);ctx.shadowBlur=0;
+
+ for(const o of objects){
+   let x=o.x-camera;
+   if(x<-100||x>W+100)continue;
+   if(o.t==="spike"){
+     ctx.fillStyle="#fff";ctx.shadowBlur=14;ctx.shadowColor="#fff";
+     ctx.beginPath();ctx.moveTo(x,ground);ctx.lineTo(x+o.w/2,o.y);ctx.lineTo(x+o.w,ground);ctx.closePath();ctx.fill();ctx.shadowBlur=0;
+   }
+   if(o.t==="block"){
+     ctx.fillStyle="#30305e";ctx.fillRect(x,o.y,o.w,o.h);
+     ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(x+2,o.y+2,o.w-4,o.h-4);
+   }
+   if(o.t==="coin"&&!o.got){
+     ctx.strokeStyle="#ffe45b";ctx.lineWidth=4;ctx.shadowBlur=15;ctx.shadowColor="#ffe45b";ctx.beginPath();ctx.arc(x+o.r,o.y+o.r,o.r,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;
+   }
+   if(o.t==="portal"){
+     ctx.strokeStyle=o.mode==="ship"?"#a44cff":"#42f5ff";ctx.lineWidth=5;ctx.shadowBlur=22;ctx.shadowColor=ctx.strokeStyle;
+     ctx.beginPath();ctx.ellipse(x+o.w/2,o.y+o.h/2,o.w/2,o.h/2,0,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;
+   }
+   if(o.t==="finish"){
+     ctx.fillStyle="#fff";ctx.fillRect(x,o.y,o.w,o.h);
+   }
+ }
+
+ for(const q of particles){ctx.globalAlpha=q.life;ctx.fillStyle="#fff";ctx.fillRect(q.x,q.y,q.s,q.s)}ctx.globalAlpha=1;
+
+ ctx.save();ctx.translate(p.x+p.s/2,p.y+p.s/2);ctx.rotate(p.rot);
+ ctx.shadowBlur=20;ctx.shadowColor="#fff";
+ if(p.mode==="cube"){
+   ctx.fillStyle="#fff";ctx.fillRect(-19,-19,38,38);
+   ctx.fillStyle="#151530";ctx.fillRect(-13,-13,26,26);
+   ctx.fillStyle="#fff";ctx.fillRect(-9,-7,5,5);ctx.fillRect(4,-7,5,5);
+ }else{
+   ctx.fillStyle="#fff";ctx.beginPath();ctx.moveTo(24,0);ctx.lineTo(-19,-16);ctx.lineTo(-7,0);ctx.lineTo(-19,16);ctx.closePath();ctx.fill();
+   ctx.fillStyle="#151530";ctx.beginPath();ctx.arc(3,0,5,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle="#fff";ctx.fillRect(-27,-3,10,6);
+ }
+ ctx.restore();
+}
+
+let last=performance.now();
+function loop(t){let dt=Math.min(40,t-last);last=t;update(dt);draw();requestAnimationFrame(loop)}
+loop(last);
+</script>
+</body>
+</html>
